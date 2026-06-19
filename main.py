@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import sys
+import os
 import json
 import re
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
@@ -518,7 +519,7 @@ class MainWindow(QMainWindow):
         self.setup_config_tab(tab_widget)
         self.setup_main_tab(tab_widget)
         self.setup_result_tab(tab_widget)
-        
+        self.setup_log_tab(tab_widget)
         main_layout.addWidget(tab_widget)
 
     def setup_config_tab(self, tab_widget):
@@ -957,6 +958,217 @@ class MainWindow(QMainWindow):
         
         result_scroll.setWidget(result_tab)
         tab_widget.addTab(result_scroll, "结果展示 & 导出")
+
+    def setup_log_tab(self, tab_widget):
+        """日志查看标签页：在前端实时查看程序运行日志"""
+        log_scroll = QScrollArea()
+        log_scroll.setWidgetResizable(True)
+        log_scroll.setFrameShape(QScrollArea.NoFrame)
+
+        log_tab = QWidget()
+        layout = QVBoxLayout(log_tab)
+        layout.setSpacing(15)
+        layout.setContentsMargins(30, 30, 30, 30)
+
+        # 标题
+        title = QLabel("📋 程序运行日志")
+        title.setFont(QFont("Microsoft YaHei UI", 16, QFont.Bold))
+        title.setStyleSheet("color: #2C3E50; padding: 8px 0;")
+        layout.addWidget(title)
+
+        # 说明文字
+        hint = QLabel("此处显示程序运行的详细日志，出错时可在本页查看报错信息，无需打开日志文件。")
+        hint.setFont(QFont("Microsoft YaHei UI", 11))
+        hint.setStyleSheet("color: #7F8C8D; padding: 0 0 8px 0;")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        # 按钮区域
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(12)
+
+        refresh_btn = QPushButton("🔄 刷新日志")
+        refresh_btn.setFixedSize(140, 40)
+        refresh_btn.setStyleSheet("""
+            QPushButton {
+                background: #4A90E2;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background: #357ABD; }
+        """)
+        refresh_btn.clicked.connect(self._refresh_log_view)
+
+        clear_btn = QPushButton("🗑️ 清空显示")
+        clear_btn.setFixedSize(140, 40)
+        clear_btn.setStyleSheet("""
+            QPushButton {
+                background: #E74C3C;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background: #C0392B; }
+        """)
+        clear_btn.clicked.connect(self._clear_log_view)
+
+        open_log_btn = QPushButton("📂 打开日志文件")
+        open_log_btn.setFixedSize(160, 40)
+        open_log_btn.setStyleSheet("""
+            QPushButton {
+                background: #27AE60;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background: #1E8449; }
+        """)
+        open_log_btn.clicked.connect(self._open_log_file)
+
+        btn_layout.addWidget(refresh_btn)
+        btn_layout.addWidget(clear_btn)
+        btn_layout.addWidget(open_log_btn)
+        btn_layout.addStretch()
+        layout.addLayout(btn_layout)
+
+        # 日志显示区域
+        self.log_text_edit = QTextEdit()
+        self.log_text_edit.setReadOnly(True)
+        self.log_text_edit.setFont(QFont("Consolas", 11))
+        self.log_text_edit.setStyleSheet("""
+            QTextEdit {
+                background: #1E1E1E;
+                color: #D4D4D4;
+                border: 1px solid #3C3C3C;
+                border-radius: 8px;
+                padding: 12px;
+            }
+        """)
+        self.log_text_edit.setMinimumHeight(400)
+        layout.addWidget(self.log_text_edit)
+
+        # 状态标签
+        self.log_status_label = QLabel("正在加载日志...")
+        self.log_status_label.setFont(QFont("Microsoft YaHei UI", 10))
+        self.log_status_label.setStyleSheet("color: #95A5A6; padding: 4px 0;")
+        layout.addWidget(self.log_status_label)
+
+        log_scroll.setWidget(log_tab)
+        tab_widget.addTab(log_scroll, "📋 日志查看")
+
+        # 初始化日志内容 & 启动自动刷新
+        self._refresh_log_view()
+        self._start_log_timer()
+
+    def _get_current_log_path(self):
+        """获取当日日志文件路径"""
+        try:
+            import logger as logger_module
+            return logger_module.get_logger().get_log_file_path()
+        except:
+            return None
+
+    def _refresh_log_view(self):
+        """读取日志文件并显示在文本框中"""
+        log_path = self._get_current_log_path()
+        if not log_path or not os.path.exists(log_path):
+            # 日志文件尚不存在，尝试手动触发一次日志记录
+            try:
+                from logger import get_logger
+                get_logger().info("日志查看页已加载")
+                log_path = self._get_current_log_path()
+            except:
+                pass
+
+        if not log_path or not os.path.exists(log_path):
+            self.log_text_edit.setHtml(
+                '<span style="color:#F39C12;">⚠️ 暂无日志文件，请先运行程序操作以生成日志。</span>'
+            )
+            self.log_status_label.setText("日志文件尚未生成")
+            return
+
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                all_lines = f.readlines()
+
+            total_lines = len(all_lines)
+            # 最多显示最后 500 行，避免卡顿
+            if total_lines > 500:
+                lines = ["...（仅显示最后 500 行）...\n"] + all_lines[-500:]
+                self.log_status_label.setText(f"日志文件：{os.path.basename(log_path)}  （显示最后 500 行，共 {total_lines} 行）")
+            else:
+                lines = all_lines
+                self.log_status_label.setText(f"日志文件：{os.path.basename(log_path)}  （共 {total_lines} 行）")
+
+            # 按行解析，给不同日志级别上色
+            html_lines = []
+            for line in lines:
+                line = line.rstrip()
+                if not line:
+                    html_lines.append("")
+                    continue
+
+                escaped = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+                if " - CRITICAL - " in line:
+                    html_lines.append(f'<span style="color:#FF0000;font-weight:bold;">{escaped}</span>')
+                elif " - ERROR - " in line:
+                    html_lines.append(f'<span style="color:#E74C3C;">{escaped}</span>')
+                elif " - WARNING - " in line:
+                    html_lines.append(f'<span style="color:#F39C12;">{escaped}</span>')
+                elif " - DEBUG - " in line:
+                    html_lines.append(f'<span style="color:#7F8C8D;">{escaped}</span>')
+                elif " - INFO - " in line:
+                    html_lines.append(f'<span style="color:#3498DB;">{escaped}</span>')
+                else:
+                    html_lines.append(f'<span style="color:#D4D4D4;">{escaped}</span>')
+
+            self.log_text_edit.setHtml("<pre>" + "\n".join(html_lines) + "</pre>")
+            # 滚动到底部
+            self.log_text_edit.verticalScrollBar().setValue(
+                self.log_text_edit.verticalScrollBar().maximum()
+            )
+        except Exception as e:
+            self.log_text_edit.setHtml(
+                f'<span style="color:#E74C3C;">读取日志文件失败：{str(e)}</span>'
+            )
+            self.log_status_label.setText(f"读取失败：{str(e)}")
+
+    def _clear_log_view(self):
+        """清空日志显示区域（不影响日志文件）"""
+        self.log_text_edit.clear()
+        self.log_status_label.setText("已清空显示（日志文件不受影响）")
+
+    def _open_log_file(self):
+        """用系统默认程序打开日志文件"""
+        log_path = self._get_current_log_path()
+        if not log_path or not os.path.exists(log_path):
+            QMessageBox.warning(self, "提示", "日志文件尚未生成，请先运行程序。")
+            return
+        try:
+            os.startfile(log_path)
+        except Exception as e:
+            QMessageBox.warning(self, "提示", f"无法打开日志文件：{str(e)}")
+
+    def _start_log_timer(self):
+        """启动定时器，每 3 秒自动刷新日志"""
+        from PyQt5.QtCore import QTimer
+        self.log_timer = QTimer()
+        self.log_timer.timeout.connect(self._refresh_log_view)
+        self.log_timer.start(3000)
+
+    def closeEvent(self, event):
+        """关闭窗口时停止定时器"""
+        if hasattr(self, 'log_timer'):
+            self.log_timer.stop()
+        super().closeEvent(event)
 
     def load_config(self):
         config = self.config_manager.load_config()
